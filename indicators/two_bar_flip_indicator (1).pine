@@ -1,0 +1,105 @@
+//@version=6
+indicator("Two-Bar Flip Indicator", overlay=true, max_labels_count=500)
+
+// Input Parameters
+showSH = input.bool(true, "Show Swing High Labels", group="Display")
+showSL = input.bool(true, "Show Swing Low Labels", group="Display")
+labelSize = input.string(size.small, "Label Size", options=[size.tiny, size.small, size.normal, size.large, size.huge], group="Label Settings")
+shColor = input.color(color.red, "Swing High Color", group="Colors")
+slColor = input.color(color.lime, "Swing Low Color", group="Colors")
+verticalOffset = input.int(2, "Vertical Offset (ticks)", minval=0, group="Label Settings")
+
+// De-duplication settings
+dedupEnabled = input.bool(false, "Enable De-duplication", group="De-duplication")
+dedupTicks = input.int(0, "Skip if within X ticks of last signal", minval=0, group="De-duplication")
+
+// Window settings
+useWindow = input.bool(false, "Limit to Last N Bars", group="Window")
+windowBars = input.int(100, "Number of Last Bars", minval=1, group="Window")
+
+// Plotshape settings
+showShapes = input.bool(false, "Show Plotshape Duplicates", group="Plotshape")
+shapeOffsetTicks = input.int(5, "Shape Offset (ticks)", minval=0, group="Plotshape")
+
+// Calculate bar patterns - strict two-bar pattern
+upCandle1 = close[1] > open[1]
+downCandle1 = close[1] < open[1]
+downCandle0 = close < open
+upCandle0 = close > open
+
+// Signal detection - only on confirmed bars with bar_index guard
+shSignal = bar_index > 0 and upCandle1 and downCandle0 and barstate.isconfirmed
+slSignal = bar_index > 0 and downCandle1 and upCandle0 and barstate.isconfirmed
+
+// Price levels - wick extremes of the two-bar pair
+pairHigh = math.max(high[1], high)
+pairLow = math.min(low[1], low)
+
+// X position for labels - bar that owns the extreme
+shX = high[1] >= high ? bar_index - 1 : bar_index
+slX = low[1] <= low ? bar_index - 1 : bar_index
+
+// Window calculation
+lastIndexStart = useWindow ? math.max(0, bar_index - windowBars + 1) : 0
+inWindow = bar_index >= lastIndexStart
+
+// Variables for de-duplication
+var float lastSHPrice = na
+var float lastSLPrice = na
+var int lastSHBar = 0
+var int lastSLBar = 0
+
+// De-duplication logic
+skipSH = false
+skipSL = false
+
+if dedupEnabled and dedupTicks > 0
+    if not na(lastSHPrice) and math.abs(pairHigh - lastSHPrice) <= dedupTicks * syminfo.mintick
+        skipSH := true
+    if not na(lastSLPrice) and math.abs(pairLow - lastSLPrice) <= dedupTicks * syminfo.mintick
+        skipSL := true
+
+// Label creation
+if shSignal and showSH and inWindow and not skipSH
+    labelPrice = pairHigh + verticalOffset * syminfo.mintick
+    label.new(shX, labelPrice, "SH", 
+              color=shColor, 
+              style=label.style_label_down,
+              size=labelSize,
+              textcolor=color.white)
+    lastSHPrice := pairHigh
+    lastSHBar := bar_index
+
+if slSignal and showSL and inWindow and not skipSL
+    labelPrice = pairLow - verticalOffset * syminfo.mintick
+    label.new(slX, labelPrice, "SL", 
+              color=slColor, 
+              style=label.style_label_up,
+              size=labelSize,
+              textcolor=color.white)
+    lastSLPrice := pairLow
+    lastSLBar := bar_index
+
+// Alert conditions with price in message
+alertcondition(shSignal and not skipSH, 
+               title="Two-bar flip SH", 
+               message="Swing High detected at {{high[1]}} on {{ticker}}")
+               
+alertcondition(slSignal and not skipSL, 
+               title="Two-bar flip SL", 
+               message="Swing Low detected at {{low[1]}} on {{ticker}}")
+
+// Optional plotshape duplicates
+plotshape(showShapes and shSignal and inWindow and not skipSH ? pairHigh + shapeOffsetTicks * syminfo.mintick : na,
+          title="SH Shape",
+          style=shape.triangledown,
+          location=location.absolute,
+          color=shColor,
+          size=size.tiny)
+          
+plotshape(showShapes and slSignal and inWindow and not skipSL ? pairLow - shapeOffsetTicks * syminfo.mintick : na,
+          title="SL Shape",
+          style=shape.triangleup,
+          location=location.absolute,
+          color=slColor,
+          size=size.tiny)
